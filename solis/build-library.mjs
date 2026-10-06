@@ -514,7 +514,7 @@ function circuitTemplate(title, threePhase) {
     term('batp', 20, batPorts[0] - 6, 'BAT+'), term('batn', 20, batPorts[1] - 6, 'BAT−'),
     ...acs.map((a, i) => rel(`rg${a}`, lcIn[i], `Grid relay ${a}`)),
     ...acs.map((a, i) => rel(`rb${a}`, bk0 + i * bkStep, `Backup relay ${a}`)),
-    { ...rel('rnpe', bk0 + acs.length * bkStep + 10, 'N-PE relay (closes off-grid)'), style: `${styleOf(shapeByKey('relay_pair'))}verticalLabelPosition=bottom;verticalAlign=top;spacingTop=-4;` },
+    { id: 'rnpe', key: 'relay_contact_no', x: rx + 10, y: bk0 + acs.length * bkStep + 10 - 24, label: 'N-PE relay (closes off-grid)' },
     ...acs.map((a, i) => termR(`g${a}`, tx, lcIn[i] - 6, `GRID ${a}`)),
     termR('gPE', tx, lcIn[acs.length - 1] + 34, 'GRID PE'),
     ...acs.map((a, i) => termR(`k${a}`, tx, bk0 + i * bkStep - 6, `BACKUP ${a}`)),
