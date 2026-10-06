@@ -27,7 +27,15 @@ const dashed = (inner) => `<dashed dashed="1"/><dashpattern pattern="3 3"/>${inn
 const text = (str, x, y, align = 'center', size = 9) =>
   `<fontsize size="${size}"/><text str="${esc(str)}" x="${x}" y="${y}" align="${align}" valign="middle" localized="0" vertical="0" flip-shape="0"/>`;
 
+const portsOf = new Map(); // stencil xml -> [[name, fx, fy]]
+
 function stencil(name, w, h, ports, body) {
+  const xml = stencilXml(name, w, h, ports, body);
+  portsOf.set(xml, ports.map(([n, x, y], i) => [n || `P${i + 1}`, +(x / w).toFixed(4), +(y / h).toFixed(4)]));
+  return xml;
+}
+
+function stencilXml(name, w, h, ports, body) {
   const cons = ports
     .map(([n, x, y]) => `<constraint x="${+(x / w).toFixed(4)}" y="${+(y / h).toFixed(4)}" perimeter="0" name="${esc(n)}"/>`)
     .join('');
@@ -63,7 +71,9 @@ function block(name, w, h, sides) {
 const SYMBOL = 'verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;';
 const BLOCK = 'verticalAlign=middle;fontStyle=1;';
 const shapes = [];
-const add = (title, w, h, xml, label = '', extra = '') => shapes.push({ title, w, h, xml, label, extra });
+const keyOf = (title) => title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+const add = (title, w, h, xml, label = '', extra = '', desc = '') =>
+  shapes.push({ key: keyOf(title), title, w, h, xml, label, extra, desc, ports: portsOf.get(xml) });
 
 add('Hybrid inverter', 220, 160, block('Solis hybrid inverter', 220, 160, {
   left: [['PV1+', 34], ['PV1−', 50], ['PV2+', 66], ['PV2−', 82], ['BAT+', 110], ['BAT−', 126]],
@@ -189,28 +199,124 @@ add('Earth', 40, 36, stencil('Earth', 40, 36, [['PE', 20, 0]],
     solid(rect(0, 0, w, 8))), '', SYMBOL);
 }
 
+// ---- installation blocks ----
+add('ATS', 200, 140, block('ATS', 200, 140, {
+  left: [['GRID L', 40], ['GRID N', 56], ['INV L', 94], ['INV N', 110]],
+  right: [['OUT L', 66], ['OUT N', 82]],
+}) .replace('</foreground>',
+  seg(88, 60, 100, 60) + seg(88, 96, 100, 96) + seg(128, 74, 101, 61) + seg(128, 74, 150, 74) + '</foreground>'),
+'ATS', 'verticalAlign=top;fontStyle=1;spacingTop=14;',
+'Automatic transfer switch (external changeover). Switches BOTH live and neutral between the GRID supply and the inverter backup (INV) supply; OUT feeds the backup loads.');
+// ATS changes the stencil body after block() ran, so copy its ports to the new xml.
+shapes.at(-1).ports = [...portsOf.values()].at(-1);
+
+add('Distribution board', 160, 120, block('Distribution board', 160, 120, {
+  left: [['L', 40], ['N', 60], ['PE', 80]],
+  right: [['OUT1 L', 30], ['OUT1 N', 46], ['OUT2 L', 74], ['OUT2 N', 90]],
+}), 'DB', BLOCK, 'Consumer unit / distribution board feeding a group of loads.');
+
+add('Terminal bar', 160, 40, stencil('Terminal bar', 160, 40,
+  [['IN', 0, 17], ...[1, 2, 3, 4, 5, 6].map((i) => [`${i}`, 3 + 22 * i, 40])],
+  seg(0, 17, 10, 17) + `${rect(10, 12, 140, 10)}<fillstroke/>` +
+  [1, 2, 3, 4, 5, 6].map((i) => seg(3 + 22 * i, 22, 3 + 22 * i, 40) + `${ellipse(3 + 22 * i - 3, 14, 6, 6)}<stroke/>`).join('')),
+'N bar', 'verticalLabelPosition=top;verticalAlign=bottom;labelBackgroundColor=none;fontStyle=1;',
+'Neutral or earth terminal bar. Label it e.g. "Grid N bar", "Backup N bar", "E bar" so separate neutrals are clear.');
+
+add('Transformer', 60, 90, stencil('Transformer', 60, 90, [['HV', 30, 0], ['LV', 30, 90]],
+  seg(30, 0, 30, 10) + `${ellipse(10, 10, 40, 40)}<stroke/>${ellipse(10, 40, 40, 40)}<stroke/>` + seg(30, 80, 30, 90)),
+'T1', 'labelPosition=right;verticalLabelPosition=middle;align=left;verticalAlign=middle;labelBackgroundColor=none;');
+
+// ---- icons (overview drawings like the LCD / brochure pictures) ----
+const ICON = 'verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;';
+{
+  const rays = [0, 45, 90, 135, 180, 225, 270, 315].map((a) => {
+    const r = (a * Math.PI) / 180, c = 13, f = (v) => +v.toFixed(1);
+    return seg(f(c + 12 * Math.cos(r)), f(c + 12 * Math.sin(r)), f(c + 16 * Math.cos(r)), f(c + 16 * Math.sin(r)));
+  }).join('');
+  const xAt = (y, x0) => +(x0 - ((y - 30) * 10) / 46).toFixed(1);
+  add('PV array (icon)', 100, 80, stencil('PV array icon', 100, 80, [['DC', 100, 53]],
+    `${ellipse(6, 6, 14, 14)}<stroke/>` + rays +
+    poly([[30, 30], [96, 30], [86, 76], [20, 76]], true) + '<fillstroke/>' +
+    [45.3, 60.7].map((y) => seg(xAt(y, 30), y, xAt(y, 96), y)).join('') +
+    [52, 74].map((x) => seg(x, 30, x - 10, 76)).join('') + seg(91, 53, 100, 53)), 'PV', ICON);
+}
+
+add('Inverter (icon)', 120, 80, stencil('Inverter icon', 120, 80,
+  [['DC', 0, 40], ['AC', 120, 40], ['BAT', 40, 80], ['COM', 40, 0]],
+  `<roundrect x="0" y="0" w="120" h="80" arcsize="6"/><fillstroke/>` +
+  `<fillcolor color="#666666"/>${rect(78, 3, 39, 74)}<fill/><fillcolor color="fill"/>` +
+  `${rect(14, 14, 26, 16)}<stroke/>` + text('solis', 8, 70, 'left', 8)), 'Inverter', ICON);
+
+add('Battery (icon)', 50, 80, stencil('Battery icon', 50, 80, [['DC', 25, 0]],
+  `${rect(18, 0, 14, 6)}<fillstroke/><roundrect x="5" y="6" w="40" h="74" arcsize="12"/><fillstroke/>` +
+  [0, 1, 2, 3].map((i) => solid(rect(11, 14 + i * 16, 28, 11))).join('')), 'Battery', ICON);
+
+add('Grid pylon (icon)', 70, 100, stencil('Grid pylon', 70, 100, [['AC', 0, 40]],
+  seg(15, 100, 30, 10) + seg(55, 100, 40, 10) + seg(30, 10, 40, 10) + seg(35, 10, 35, 2) +
+  seg(5, 25, 65, 25) + seg(10, 45, 60, 45) + seg(5, 25, 5, 32) + seg(65, 25, 65, 32) + seg(10, 45, 10, 52) + seg(60, 45, 60, 52) +
+  seg(24, 50, 50, 78) + seg(46, 50, 20, 78) + seg(27, 25, 43, 45) + seg(43, 25, 27, 45)), 'Grid', ICON);
+
+add('Smart meter (icon)', 50, 70, stencil('Smart meter icon', 50, 70,
+  [['IN', 5, 40], ['OUT', 45, 40], ['COM', 25, 70]],
+  `<roundrect x="5" y="5" w="40" h="60" arcsize="12"/><fillstroke/>${rect(12, 14, 26, 14)}<fillstroke/>` +
+  seg(18, 65, 18, 70) + seg(32, 65, 32, 70)), 'Meter', ICON);
+
+add('EPM (icon)', 90, 60, stencil('EPM icon', 90, 60, [['CT', 5, 35], ['NET', 85, 35], ['COM', 45, 55]],
+  `<roundrect x="5" y="15" w="80" h="40" arcsize="10"/><fillstroke/>${rect(15, 25, 24, 14)}<fillstroke/>` + seg(75, 15, 75, 2)),
+'EPM', ICON, 'Solis Export Power Manager: controls export of one or more inverters using a CT or meter.');
+
+add('Data stick (icon)', 30, 60, stencil('Data stick', 30, 60, [['COM', 15, 60]],
+  `${rect(8, 14, 14, 46)}<fillstroke/>` +
+  `<path>${move(22, 8)}<arc rx="6" ry="6" x-axis-rotation="0" large-arc-flag="0" sweep-flag="1" x="28" y="14"/></path><stroke/>` +
+  `<path>${move(22, 2)}<arc rx="12" ry="12" x-axis-rotation="0" large-arc-flag="0" sweep-flag="1" x="34" y="14"/></path><stroke/>`),
+'Data stick', ICON, 'WiFi / 4G / LAN logger that sends inverter data to SolisCloud.');
+
+add('Cloud (icon)', 100, 60, stencil('Cloud', 100, 60, [['NET', 0, 48], ['NET2', 50, 60]],
+  `<path>${move(20, 55)}` +
+  `<arc rx="15" ry="15" x-axis-rotation="0" large-arc-flag="0" sweep-flag="1" x="22" y="28"/>` +
+  `<arc rx="17" ry="17" x-axis-rotation="0" large-arc-flag="0" sweep-flag="1" x="52" y="18"/>` +
+  `<arc rx="16" ry="16" x-axis-rotation="0" large-arc-flag="0" sweep-flag="1" x="80" y="30"/>` +
+  `<arc rx="13" ry="13" x-axis-rotation="0" large-arc-flag="0" sweep-flag="1" x="82" y="55"/><close/></path><fillstroke/>`),
+'SolisCloud', 'verticalLabelPosition=middle;verticalAlign=middle;labelBackgroundColor=none;fontSize=10;');
+
+add('Monitor (icon)', 80, 70, stencil('Monitor', 80, 70, [['NET', 5, 28]],
+  `${rect(5, 5, 70, 45)}<fillstroke/>` + seg(40, 50, 40, 60) + seg(25, 62, 55, 62)), 'Monitoring', ICON);
+
 // ---- wires ----
 const WIRE = 'endArrow=none;html=1;rounded=0;edgeStyle=orthogonalEdgeStyle;strokeWidth=2;';
 const wires = [
-  ['Wire: AC live (L)', '#8B4513', ''],
-  ['Wire: AC neutral (N)', '#1F5FBF', ''],
-  ['Wire: earth (PE)', '#2E9E3E', ''],
-  ['Wire: DC +', '#D62828', ''],
-  ['Wire: DC −', '#222222', ''],
-  ['Wire: comms (RS485 / CAN)', '#7B3FB5', 'dashed=1;strokeWidth=1.5;'],
-  ['Wire: CT signal', '#E07A00', 'dashed=1;dashPattern=8 4;strokeWidth=1.5;'],
+  ['Wire: AC live (L)', '#8B4513', '', 'L'],
+  ['Wire: AC neutral (N)', '#1F5FBF', '', 'N'],
+  ['Wire: earth (PE)', '#2E9E3E', '', 'PE'],
+  ['Wire: DC +', '#D62828', '', 'DC+'],
+  ['Wire: DC −', '#222222', '', 'DC-'],
+  ['Wire: AC (single line)', '#D62828', '', 'AC'],
+  ['Wire: comms (RS485 / CAN)', '#7B3FB5', 'dashed=1;strokeWidth=1.5;', 'COMMS'],
+  ['Wire: CT signal', '#E07A00', 'dashed=1;dashPattern=8 4;strokeWidth=1.5;', 'CT'],
+  ['Wire: internet', '#888888', 'dashed=1;dashPattern=2 4;strokeWidth=1.5;', 'NET'],
 ];
 
 // ---- assemble ----
 const cellXml = (inner) =>
   `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>${inner}</root></mxGraphModel>`;
 
-const library = shapes.map(({ title, w, h, xml, label, extra }) => ({
-  xml: cellXml(`<mxCell id="2" value="${esc(label).replace(/\n/g, '&#10;')}" style="${
-    esc(`shape=stencil(${compress(xml)});html=1;whiteSpace=wrap;strokeWidth=2;${extra}`)
-  }" vertex="1" parent="1"><mxGeometry width="${w}" height="${h}" as="geometry"/></mxCell>`),
-  w, h, title, aspect: 'fixed',
+const styleOf = ({ xml, extra }) => `shape=stencil(${compress(xml)});html=1;whiteSpace=wrap;strokeWidth=2;${extra}`;
+
+const library = shapes.map((s) => ({
+  xml: cellXml(`<mxCell id="2" value="${esc(s.label).replace(/\n/g, '&#10;')}" style="${esc(styleOf(s))
+  }" vertex="1" parent="1"><mxGeometry width="${s.w}" height="${s.h}" as="geometry"/></mxCell>`),
+  w: s.w, h: s.h, title: s.title, aspect: 'fixed',
 }));
+
+// Machine-readable catalog for tools that generate diagrams (e.g. the training site's AI drawer).
+const catalog = {
+  shapes: Object.fromEntries(shapes.map((s) => [s.key, {
+    title: s.title, w: s.w, h: s.h, label: s.label, desc: s.desc || undefined,
+    ports: Object.fromEntries(s.ports.map(([n, x, y]) => [n, [x, y]])),
+    style: styleOf(s),
+  }])),
+  wires: Object.fromEntries(wires.map(([title, color, extra, type]) => [type, { title, style: `${WIRE}strokeColor=${color};${extra}` }])),
+};
 
 for (const [title, color, extra] of wires) {
   library.push({
@@ -224,6 +330,7 @@ for (const [title, color, extra] of wires) {
 const libXml = `<mxlibrary title="Solis">${JSON.stringify(library).replace(/&/g, '&amp;').replace(/</g, '&lt;')}</mxlibrary>\n`;
 mkdirSync(join(webapp, 'solis'), { recursive: true });
 writeFileSync(join(webapp, 'solis/solis-library.xml'), libXml);
+writeFileSync(join(webapp, 'solis/solis-shapes.json'), JSON.stringify(catalog));
 
 const config = {
   defaultLibraries: 'solis;general',
